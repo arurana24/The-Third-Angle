@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import "./App.css";
 import axios from "axios";
 
@@ -11,11 +11,15 @@ const App = () => {
   const [individualPerformance, setIndividualPerformance] = useState([]);
   const [productivityTrends, setProductivityTrends] = useState({});
   const [leaderboard, setLeaderboard] = useState([]);
-  const [tasks, setTasks] = useState([]);
+  const [kanbanTasks, setKanbanTasks] = useState({ todo: [], in_progress: [], done: [], blocked: [] });
   const [timeEntries, setTimeEntries] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [burnoutAnalysis, setBurnoutAnalysis] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
   const [loading, setLoading] = useState(true);
+  const [draggedTask, setDraggedTask] = useState(null);
+  const [showNotifications, setShowNotifications] = useState(false);
 
   // Initialize sample data and fetch all analytics
   useEffect(() => {
@@ -36,8 +40,9 @@ const App = () => {
         fetchIndividualPerformance(),
         fetchProductivityTrends(),
         fetchLeaderboard(),
-        fetchTasks(),
-        fetchTimeEntries()
+        fetchKanbanTasks(),
+        fetchTimeEntries(),
+        fetchBurnoutAnalysis()
       ]);
       
       setLoading(false);
@@ -51,6 +56,9 @@ const App = () => {
     try {
       const response = await axios.get(`${API}/users`);
       setUsers(response.data);
+      if (response.data.length > 0 && !selectedUser) {
+        setSelectedUser(response.data[0].id);
+      }
     } catch (error) {
       console.error("Error fetching users:", error);
     }
@@ -92,12 +100,12 @@ const App = () => {
     }
   };
 
-  const fetchTasks = async () => {
+  const fetchKanbanTasks = async () => {
     try {
-      const response = await axios.get(`${API}/tasks`);
-      setTasks(response.data);
+      const response = await axios.get(`${API}/tasks/kanban`);
+      setKanbanTasks(response.data);
     } catch (error) {
-      console.error("Error fetching tasks:", error);
+      console.error("Error fetching kanban tasks:", error);
     }
   };
 
@@ -110,10 +118,61 @@ const App = () => {
     }
   };
 
+  const fetchNotifications = async (userId) => {
+    try {
+      const response = await axios.get(`${API}/notifications/${userId}`);
+      setNotifications(response.data);
+    } catch (error) {
+      console.error("Error fetching notifications:", error);
+    }
+  };
+
+  const fetchBurnoutAnalysis = async () => {
+    try {
+      const response = await axios.get(`${API}/analytics/burnout-analysis`);
+      setBurnoutAnalysis(response.data);
+    } catch (error) {
+      console.error("Error fetching burnout analysis:", error);
+    }
+  };
+
+  // Drag and Drop handlers
+  const handleDragStart = (e, task) => {
+    setDraggedTask(task);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = async (e, newStatus) => {
+    e.preventDefault();
+    
+    if (!draggedTask) return;
+    
+    try {
+      // Update task status
+      await axios.put(`${API}/tasks/${draggedTask.id}`, {
+        status: newStatus
+      });
+      
+      // Refresh kanban data
+      await fetchKanbanTasks();
+      await fetchTeamOverview();
+      
+      setDraggedTask(null);
+    } catch (error) {
+      console.error("Error updating task:", error);
+    }
+  };
+
   const getStatusColor = (status) => {
     switch (status) {
       case 'done': return 'bg-green-100 text-green-800 border-green-200';
       case 'in_progress': return 'bg-blue-100 text-blue-800 border-blue-200';
+      case 'blocked': return 'bg-red-100 text-red-800 border-red-200';
       default: return 'bg-gray-100 text-gray-800 border-gray-200';
     }
   };
@@ -125,6 +184,24 @@ const App = () => {
       case 'low': return 'bg-green-100 text-green-800';
       default: return 'bg-gray-100 text-gray-800';
     }
+  };
+
+  const getBurnoutColor = (risk) => {
+    switch (risk) {
+      case 'high': return 'bg-red-100 text-red-800 border-red-300';
+      case 'medium': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
+      default: return 'bg-green-100 text-green-800 border-green-300';
+    }
+  };
+
+  const formatBadge = (badge) => {
+    const badgeMap = {
+      'task_master_10': '🏆 Task Master',
+      'task_master_50': '🏆 Task Expert',
+      'task_master_100': '🏆 Task Legend',
+      'consistent_7_days': '⚡ Consistent'
+    };
+    return badgeMap[badge] || badge;
   };
 
   if (loading) {
@@ -152,10 +229,47 @@ const App = () => {
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">The Third Angle</h1>
-                <p className="text-gray-600">Team Productivity Analytics</p>
+                <p className="text-gray-600">Enhanced Team Productivity Analytics</p>
               </div>
             </div>
             <div className="flex items-center space-x-4">
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    setShowNotifications(!showNotifications);
+                    if (selectedUser && !showNotifications) {
+                      fetchNotifications(selectedUser);
+                    }
+                  }}
+                  className="bg-blue-100 p-2 rounded-lg hover:bg-blue-200 transition-colors"
+                >
+                  <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-5 5-5-5h5V3h4v14z" />
+                  </svg>
+                </button>
+                {showNotifications && (
+                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
+                    <div className="p-4 border-b border-gray-200">
+                      <h3 className="font-semibold text-gray-900">Notifications</h3>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto">
+                      {notifications.length > 0 ? (
+                        notifications.slice(0, 5).map(notification => (
+                          <div key={notification.id} className={`p-3 border-b border-gray-100 ${!notification.read ? 'bg-blue-50' : ''}`}>
+                            <div className="font-medium text-sm text-gray-900">{notification.title}</div>
+                            <div className="text-xs text-gray-600 mt-1">{notification.message}</div>
+                            <div className="text-xs text-gray-400 mt-1">
+                              {new Date(notification.created_date).toLocaleString()}
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="p-4 text-center text-gray-500">No notifications</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
               <span className="text-sm text-gray-500">{teamOverview.team_size} Team Members</span>
             </div>
           </div>
@@ -171,7 +285,8 @@ const App = () => {
               { key: 'performance', label: 'Individual Performance', icon: '👤' },
               { key: 'trends', label: 'Productivity Trends', icon: '📈' },
               { key: 'leaderboard', label: 'Leaderboard', icon: '🏆' },
-              { key: 'tasks', label: 'Task Management', icon: '✓' }
+              { key: 'kanban', label: 'Task Board', icon: '📋' },
+              { key: 'burnout', label: 'Burnout Analysis', icon: '⚡' }
             ].map(tab => (
               <button
                 key={tab.key}
@@ -200,9 +315,9 @@ const App = () => {
             <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl shadow-lg text-white p-8">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center">
                 <div>
-                  <h2 className="text-3xl font-bold mb-4">Team Productivity Dashboard</h2>
+                  <h2 className="text-3xl font-bold mb-4">Enhanced Team Productivity Dashboard</h2>
                   <p className="text-blue-100 text-lg mb-6">
-                    Track, analyze, and optimize your team's productivity with real-time insights and analytics.
+                    Advanced analytics with burnout detection, task assignment, and real-time collaboration features.
                   </p>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="bg-white/10 rounded-lg p-4">
@@ -225,8 +340,8 @@ const App = () => {
               </div>
             </div>
 
-            {/* Key Metrics */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {/* Enhanced Key Metrics */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
               <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
                 <div className="flex items-center justify-between">
                   <div>
@@ -272,17 +387,55 @@ const App = () => {
               <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-gray-600 text-sm font-medium">Team Score</p>
-                    <p className="text-2xl font-bold text-indigo-600">{teamOverview.team_productivity_score || 0}%</p>
+                    <p className="text-gray-600 text-sm font-medium">Blocked</p>
+                    <p className="text-2xl font-bold text-red-600">{teamOverview.blocked_tasks || 0}</p>
                   </div>
-                  <div className="bg-indigo-100 p-3 rounded-lg">
-                    <svg className="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                  <div className="bg-red-100 p-3 rounded-lg">
+                    <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636m12.728 12.728L5.636 5.636" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-gray-600 text-sm font-medium">Unassigned</p>
+                    <p className="text-2xl font-bold text-orange-600">{teamOverview.unassigned_tasks || 0}</p>
+                  </div>
+                  <div className="bg-orange-100 p-3 rounded-lg">
+                    <svg className="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
                     </svg>
                   </div>
                 </div>
               </div>
             </div>
+
+            {/* Burnout Alert */}
+            {(teamOverview.high_burnout_users > 0 || teamOverview.medium_burnout_users > 0) && (
+              <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 rounded-lg">
+                <div className="flex">
+                  <div className="flex-shrink-0">
+                    <svg className="h-5 w-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <div className="ml-3">
+                    <p className="text-sm text-yellow-700">
+                      <strong>Burnout Alert:</strong> {teamOverview.high_burnout_users} team member(s) at high risk, {teamOverview.medium_burnout_users} at medium risk. 
+                      <button 
+                        onClick={() => setActiveTab('burnout')}
+                        className="ml-2 underline hover:text-yellow-800"
+                      >
+                        View analysis →
+                      </button>
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -290,7 +443,7 @@ const App = () => {
         {activeTab === 'performance' && (
           <div className="space-y-6">
             <div className="bg-white rounded-xl shadow-lg p-6">
-              <h3 className="text-xl font-bold text-gray-900 mb-6">Individual Performance Metrics</h3>
+              <h3 className="text-xl font-bold text-gray-900 mb-6">Individual Performance Metrics with Badges</h3>
               <div className="grid gap-6">
                 {individualPerformance.map((user, index) => (
                   <div key={user.user_id} className="border border-gray-200 rounded-lg p-6 hover:shadow-md transition-shadow">
@@ -309,6 +462,9 @@ const App = () => {
                         <div>
                           <h4 className="font-semibold text-gray-900">{user.name}</h4>
                           <p className="text-gray-600 text-sm">Productivity Score: {user.productivity_score}%</p>
+                          <div className={`inline-block px-2 py-1 text-xs rounded-full mt-1 ${getBurnoutColor(user.burnout_risk)}`}>
+                            {user.burnout_risk} burnout risk
+                          </div>
                         </div>
                       </div>
                       <div className="text-right">
@@ -328,6 +484,20 @@ const App = () => {
                         </div>
                       </div>
                     </div>
+                    
+                    {/* Badges */}
+                    {user.badges.length > 0 && (
+                      <div className="mt-4">
+                        <div className="flex flex-wrap gap-2">
+                          {user.badges.map(badge => (
+                            <span key={badge} className="bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded-full">
+                              {formatBadge(badge)}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
                     <div className="mt-4">
                       <div className="bg-gray-200 rounded-full h-2">
                         <div 
@@ -378,9 +548,9 @@ const App = () => {
                 </div>
               </div>
 
-              {/* Time Logging Trends */}
+              {/* Time Logging Trends with Overtime Detection */}
               <div>
-                <h4 className="text-lg font-semibold text-gray-800 mb-4">Daily Hours Logged</h4>
+                <h4 className="text-lg font-semibold text-gray-800 mb-4">Daily Hours Logged (with Overtime)</h4>
                 <div className="bg-gray-50 rounded-lg p-4">
                   {productivityTrends.time_logging_trends && productivityTrends.time_logging_trends.length > 0 ? (
                     <div className="grid grid-cols-7 gap-2">
@@ -389,15 +559,30 @@ const App = () => {
                           <div className="text-xs text-gray-600 mb-1">
                             {new Date(day._id).toLocaleDateString('en-US', { weekday: 'short' })}
                           </div>
-                          <div 
-                            className="bg-green-500 rounded mx-auto transition-all duration-300 hover:bg-green-600"
-                            style={{ 
-                              height: `${Math.max(day.total_hours * 3, 8)}px`,
-                              width: '20px'
-                            }}
-                            title={`${day.total_hours.toFixed(1)} hours logged`}
-                          ></div>
+                          <div className="relative">
+                            <div 
+                              className="bg-green-500 rounded mx-auto transition-all duration-300 hover:bg-green-600"
+                              style={{ 
+                                height: `${Math.max(day.total_hours * 3, 8)}px`,
+                                width: '20px'
+                              }}
+                              title={`${day.total_hours.toFixed(1)} hours logged`}
+                            ></div>
+                            {day.overtime_hours > 0 && (
+                              <div 
+                                className="bg-red-500 rounded mx-auto absolute top-0 left-1/2 transform -translate-x-1/2"
+                                style={{ 
+                                  height: `${day.overtime_hours * 3}px`,
+                                  width: '20px'
+                                }}
+                                title={`${day.overtime_hours.toFixed(1)} overtime hours`}
+                              ></div>
+                            )}
+                          </div>
                           <div className="text-xs text-gray-800 mt-1">{day.total_hours.toFixed(1)}h</div>
+                          {day.overtime_hours > 0 && (
+                            <div className="text-xs text-red-600">⚠️ OT</div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -415,7 +600,7 @@ const App = () => {
           <div className="space-y-6">
             <div className="bg-white rounded-xl shadow-lg p-6">
               <div className="flex items-center justify-between mb-6">
-                <h3 className="text-xl font-bold text-gray-900">Monthly Leaderboard</h3>
+                <h3 className="text-xl font-bold text-gray-900">Monthly Leaderboard with Achievement Badges</h3>
                 <div className="flex items-center space-x-2">
                   <img 
                     src="https://images.unsplash.com/photo-1590650624342-f527904ca1b3?w=300&h=200&fit=crop&auto=format" 
@@ -450,6 +635,9 @@ const App = () => {
                       <div>
                         <h4 className="font-semibold text-gray-900">{user.name}</h4>
                         <p className="text-gray-600 text-sm">Rank #{user.rank}</p>
+                        <div className={`inline-block px-2 py-1 text-xs rounded-full mt-1 ${getBurnoutColor(user.burnout_risk)}`}>
+                          {user.burnout_risk} risk
+                        </div>
                       </div>
                     </div>
                     
@@ -466,6 +654,18 @@ const App = () => {
                         <p className="text-2xl font-bold text-indigo-600">{user.points}</p>
                         <p className="text-xs text-gray-600">Points</p>
                       </div>
+                      {user.badges.length > 0 && (
+                        <div className="text-center">
+                          <div className="flex flex-wrap gap-1">
+                            {user.badges.slice(0, 2).map(badge => (
+                              <span key={badge} className="text-xs">
+                                {formatBadge(badge).split(' ')[0]}
+                              </span>
+                            ))}
+                          </div>
+                          <p className="text-xs text-gray-600">Badges</p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -474,120 +674,170 @@ const App = () => {
           </div>
         )}
 
-        {/* Task Management Tab */}
-        {activeTab === 'tasks' && (
+        {/* Kanban Board Tab */}
+        {activeTab === 'kanban' && (
           <div className="space-y-6">
             <div className="bg-white rounded-xl shadow-lg p-6">
-              <h3 className="text-xl font-bold text-gray-900 mb-6">Task Management Overview</h3>
-              
-              {/* Task Status Distribution */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-                <div className="bg-gray-50 rounded-lg p-4">
-                  <h4 className="font-semibold text-gray-700 mb-2">To Do</h4>
-                  <div className="space-y-2">
-                    {tasks.filter(task => task.status === 'todo').slice(0, 3).map(task => (
-                      <div key={task.id} className="bg-white p-2 rounded border-l-4 border-gray-400">
-                        <p className="text-sm font-medium">{task.title}</p>
-                        <span className={`inline-block px-2 py-1 text-xs rounded-full ${getPriorityColor(task.priority)}`}>
-                          {task.priority}
-                        </span>
-                      </div>
-                    ))}
-                    <p className="text-xs text-gray-500">
-                      +{Math.max(0, tasks.filter(task => task.status === 'todo').length - 3)} more
-                    </p>
-                  </div>
-                </div>
-
-                <div className="bg-blue-50 rounded-lg p-4">
-                  <h4 className="font-semibold text-blue-700 mb-2">In Progress</h4>
-                  <div className="space-y-2">
-                    {tasks.filter(task => task.status === 'in_progress').slice(0, 3).map(task => (
-                      <div key={task.id} className="bg-white p-2 rounded border-l-4 border-blue-400">
-                        <p className="text-sm font-medium">{task.title}</p>
-                        <span className={`inline-block px-2 py-1 text-xs rounded-full ${getPriorityColor(task.priority)}`}>
-                          {task.priority}
-                        </span>
-                      </div>
-                    ))}
-                    <p className="text-xs text-gray-500">
-                      +{Math.max(0, tasks.filter(task => task.status === 'in_progress').length - 3)} more
-                    </p>
-                  </div>
-                </div>
-
-                <div className="bg-green-50 rounded-lg p-4">
-                  <h4 className="font-semibold text-green-700 mb-2">Completed</h4>
-                  <div className="space-y-2">
-                    {tasks.filter(task => task.status === 'done').slice(0, 3).map(task => (
-                      <div key={task.id} className="bg-white p-2 rounded border-l-4 border-green-400">
-                        <p className="text-sm font-medium">{task.title}</p>
-                        <span className={`inline-block px-2 py-1 text-xs rounded-full ${getPriorityColor(task.priority)}`}>
-                          {task.priority}
-                        </span>
-                      </div>
-                    ))}
-                    <p className="text-xs text-gray-500">
-                      +{Math.max(0, tasks.filter(task => task.status === 'done').length - 3)} more
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Recent Tasks Table */}
-              <div>
-                <h4 className="font-semibold text-gray-800 mb-4">Recent Tasks</h4>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Task</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Assigned To</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Priority</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {tasks.slice(0, 10).map(task => {
+              <h3 className="text-xl font-bold text-gray-900 mb-6">Interactive Task Board</h3>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                {Object.entries(kanbanTasks).map(([status, tasks]) => (
+                  <div
+                    key={status}
+                    className="bg-gray-50 rounded-lg p-4 min-h-96"
+                    onDragOver={handleDragOver}
+                    onDrop={(e) => handleDrop(e, status)}
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="font-semibold text-gray-800 capitalize">
+                        {status.replace('_', ' ')} ({tasks.length})
+                      </h4>
+                      <div className={`w-3 h-3 rounded-full ${
+                        status === 'todo' ? 'bg-gray-400' :
+                        status === 'in_progress' ? 'bg-blue-500' :
+                        status === 'done' ? 'bg-green-500' :
+                        'bg-red-500'
+                      }`}></div>
+                    </div>
+                    
+                    <div className="space-y-3">
+                      {tasks.map(task => {
                         const assignedUser = users.find(u => u.id === task.assigned_to);
                         return (
-                          <tr key={task.id} className="hover:bg-gray-50">
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div>
-                                <div className="text-sm font-medium text-gray-900">{task.title}</div>
-                                <div className="text-sm text-gray-500">{task.description || 'No description'}</div>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="flex items-center">
-                                <img
-                                  src={assignedUser?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(assignedUser?.name || 'Unknown')}&background=random`}
-                                  alt={assignedUser?.name}
-                                  className="w-8 h-8 rounded-full mr-2"
-                                />
-                                <span className="text-sm text-gray-900">{assignedUser?.name || 'Unknown'}</span>
-                              </div>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full border ${getStatusColor(task.status)}`}>
-                                {task.status.replace('_', ' ')}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
-                              <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getPriorityColor(task.priority)}`}>
+                          <div
+                            key={task.id}
+                            draggable
+                            onDragStart={(e) => handleDragStart(e, task)}
+                            className="bg-white p-3 rounded-lg shadow-sm border border-gray-200 cursor-move hover:shadow-md transition-all duration-200"
+                          >
+                            <div className="flex items-start justify-between mb-2">
+                              <h5 className="font-medium text-gray-900 text-sm">{task.title}</h5>
+                              <span className={`inline-block px-2 py-1 text-xs rounded-full ${getPriorityColor(task.priority)}`}>
                                 {task.priority}
                               </span>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                              {new Date(task.created_date).toLocaleDateString()}
-                            </td>
-                          </tr>
+                            </div>
+                            
+                            {task.description && (
+                              <p className="text-gray-600 text-xs mb-2 line-clamp-2">{task.description}</p>
+                            )}
+                            
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center space-x-2">
+                                {assignedUser && (
+                                  <img
+                                    src={assignedUser.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(assignedUser.name)}&background=random`}
+                                    alt={assignedUser.name}
+                                    className="w-6 h-6 rounded-full"
+                                    title={assignedUser.name}
+                                  />
+                                )}
+                                {task.assigned_users?.length > 0 && (
+                                  <div className="text-xs text-gray-500">+{task.assigned_users.length}</div>
+                                )}
+                              </div>
+                              
+                              <div className="flex items-center space-x-1 text-xs text-gray-500">
+                                {task.comments_count > 0 && (
+                                  <span className="flex items-center">
+                                    <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                                    </svg>
+                                    {task.comments_count}
+                                  </span>
+                                )}
+                                {task.estimated_hours && (
+                                  <span>{task.estimated_hours}h</span>
+                                )}
+                              </div>
+                            </div>
+                            
+                            {task.tags?.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {task.tags.slice(0, 2).map(tag => (
+                                  <span key={tag} className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded">
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
                         );
                       })}
-                    </tbody>
-                  </table>
-                </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Burnout Analysis Tab */}
+        {activeTab === 'burnout' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-xl shadow-lg p-6">
+              <h3 className="text-xl font-bold text-gray-900 mb-6">Team Burnout Analysis</h3>
+              
+              <div className="grid gap-6">
+                {burnoutAnalysis.map(user => (
+                  <div key={user.user_id} className={`border-2 rounded-lg p-6 ${getBurnoutColor(user.burnout_risk)}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-4">
+                        <img
+                          src={user.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.name)}&background=random`}
+                          alt={user.name}
+                          className="w-12 h-12 rounded-full object-cover"
+                        />
+                        <div>
+                          <h4 className="font-semibold text-gray-900">{user.name}</h4>
+                          <p className="text-sm font-medium capitalize">{user.burnout_risk} Burnout Risk</p>
+                        </div>
+                      </div>
+                      
+                      <div className="text-right">
+                        <div className="grid grid-cols-3 gap-4">
+                          <div>
+                            <p className="text-2xl font-bold text-gray-900">{user.total_hours_week}h</p>
+                            <p className="text-gray-600 text-sm">Total Hours</p>
+                          </div>
+                          <div>
+                            <p className="text-2xl font-bold text-red-600">{user.overtime_hours_week}h</p>
+                            <p className="text-gray-600 text-sm">Overtime</p>
+                          </div>
+                          <div>
+                            <p className="text-2xl font-bold text-blue-600">{user.avg_daily_hours}</p>
+                            <p className="text-gray-600 text-sm">Avg Daily</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {user.burnout_risk === 'high' && (
+                      <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                        <p className="text-red-800 text-sm">
+                          ⚠️ <strong>High Burnout Risk:</strong> Consider reducing workload and encouraging breaks.
+                        </p>
+                      </div>
+                    )}
+                    
+                    {user.burnout_risk === 'medium' && (
+                      <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                        <p className="text-yellow-800 text-sm">
+                          ⚡ <strong>Medium Burnout Risk:</strong> Monitor workload and ensure work-life balance.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              
+              <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <h4 className="font-semibold text-blue-900 mb-2">Burnout Prevention Tips:</h4>
+                <ul className="text-blue-800 text-sm space-y-1">
+                  <li>• Encourage regular breaks and time off</li>
+                  <li>• Set realistic deadlines and expectations</li>
+                  <li>• Promote open communication about workload</li>
+                  <li>• Implement flexible working arrangements</li>
+                  <li>• Recognize and reward achievements</li>
+                </ul>
               </div>
             </div>
           </div>
